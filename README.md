@@ -15,6 +15,8 @@ Faculty members often spend significant time manually preparing Minutes of Meeti
 
 Minutes of Meeting AI automates this process.
 
+Link for the demo video : https://drive.google.com/drive/folders/1abfQzCtUgnLystporC1cktSLFDCZOFW8?usp=share_link
+
 ## ✨ Key Features
 
 - 🎙️ Meeting audio recording
