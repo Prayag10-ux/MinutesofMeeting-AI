@@ -1,4 +1,6 @@
 streamlit
 faster-whisper
+av<19
 python-docx
 ollama
+openai
