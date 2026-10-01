@@ -1,28 +1,21 @@
 import json
+import os
 import re
+
 import ollama
+from openai import OpenAI
 
 
-# ============================================================
-# GEMMA MODEL
-# ============================================================
+LOCAL_MODEL = "gemma3:4b"
 
-MODEL_NAME = "gemma3:4b"
+# Groq's OpenAI-compatible API
+GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
-
-# ============================================================
-# JSON CLEANING
-# ============================================================
 
 def clean_json_response(response_text):
-    """
-    Gemma may sometimes wrap JSON inside markdown code blocks.
-    This function extracts the JSON safely.
-    """
-
     response_text = response_text.strip()
 
-    # Remove markdown code fences
     response_text = re.sub(
         r"^```json\s*",
         "",
@@ -44,7 +37,6 @@ def clean_json_response(response_text):
 
     response_text = response_text.strip()
 
-    # Find the first JSON object if Gemma added extra text
     start = response_text.find("{")
     end = response_text.rfind("}")
 
@@ -54,39 +46,17 @@ def clean_json_response(response_text):
     return response_text
 
 
-# ============================================================
-# VALIDATE MOM
-# ============================================================
-
 def validate_mom(data):
-    """
-    Makes sure the output has the structure expected
-    by the rest of the application.
-    """
 
     if not isinstance(data, dict):
         data = {}
 
-    # --------------------------------------------------------
-    # Agenda
-    # --------------------------------------------------------
-
-    agenda = data.get(
-        "agenda",
-        "Not specified"
-    )
+    agenda = data.get("agenda", "Not specified")
 
     if not isinstance(agenda, str):
         agenda = "Not specified"
 
-    # --------------------------------------------------------
-    # Discussion Points
-    # --------------------------------------------------------
-
-    discussion_points = data.get(
-        "discussion_points",
-        []
-    )
+    discussion_points = data.get("discussion_points", [])
 
     if not isinstance(discussion_points, list):
         discussion_points = []
@@ -97,14 +67,7 @@ def validate_mom(data):
         if str(point).strip()
     ]
 
-    # --------------------------------------------------------
-    # Decisions
-    # --------------------------------------------------------
-
-    decisions = data.get(
-        "decisions",
-        []
-    )
+    decisions = data.get("decisions", [])
 
     if not isinstance(decisions, list):
         decisions = []
@@ -115,14 +78,7 @@ def validate_mom(data):
         if str(decision).strip()
     ]
 
-    # --------------------------------------------------------
-    # Action Items
-    # --------------------------------------------------------
-
-    action_items = data.get(
-        "action_items",
-        []
-    )
+    action_items = data.get("action_items", [])
 
     if not isinstance(action_items, list):
         action_items = []
@@ -166,28 +122,18 @@ def validate_mom(data):
             }
         )
 
-    # --------------------------------------------------------
     # Remove duplicate discussion points
-    # --------------------------------------------------------
-
     discussion_points = list(
         dict.fromkeys(discussion_points)
     )
 
-    # --------------------------------------------------------
     # Remove duplicate decisions
-    # --------------------------------------------------------
-
     decisions = list(
         dict.fromkeys(decisions)
     )
 
-    # --------------------------------------------------------
-    # Remove duplicate actions
-    # --------------------------------------------------------
-
+    # Remove duplicate action items
     unique_actions = []
-
     seen_actions = set()
 
     for action in cleaned_actions:
@@ -201,7 +147,6 @@ def validate_mom(data):
             continue
 
         seen_actions.add(key)
-
         unique_actions.append(action)
 
     return {
@@ -212,18 +157,147 @@ def validate_mom(data):
     }
 
 
-# ============================================================
-# MAIN MOM GENERATOR
-# ============================================================
+SYSTEM_PROMPT = """
+You are an AI assistant that converts meeting transcripts into
+professional Minutes of Meeting.
 
-def generate_mom(
-    transcript,
-    participants=""
-):
-    """
-    Uses Gemma 3 4B to convert a meeting transcript
-    into structured Minutes of Meeting.
-    """
+Use ONLY information present in the transcript.
+
+Do not invent names, decisions, responsibilities, dates, deadlines,
+or facts that are not present.
+
+Return ONLY valid JSON.
+
+Use exactly this structure:
+
+{
+    "agenda": "string",
+    "discussion_points": [
+        "string"
+    ],
+    "decisions": [
+        "string"
+    ],
+    "action_items": [
+        {
+            "responsible": "string",
+            "task": "string"
+        }
+    ]
+}
+
+Rules:
+
+1. agenda:
+   Summarize the main purpose or agenda of the meeting.
+
+2. discussion_points:
+   Extract important topics actually discussed.
+
+3. decisions:
+   Extract decisions that were actually made.
+   Do not treat suggestions as decisions.
+
+4. action_items:
+   Extract tasks that participants agreed to perform.
+
+5. responsible:
+   Include the responsible person only if the transcript
+   clearly identifies them.
+
+6. Never invent missing information.
+
+7. If something is not available, use:
+   "Not specified"
+
+8. Keep the output concise and professional.
+"""
+
+
+def build_user_prompt(transcript, participants):
+
+    participant_text = participants.strip()
+
+    if not participant_text:
+        participant_text = "Not specified"
+
+    return f"""
+Participants provided by the user:
+{participant_text}
+
+Meeting transcript:
+{transcript}
+
+Generate the Minutes of Meeting from this transcript.
+
+Remember:
+- Do not invent information.
+- Use only the transcript.
+- Return valid JSON only.
+"""
+
+
+def generate_with_ollama(transcript, participants):
+
+    response = ollama.chat(
+        model=LOCAL_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": build_user_prompt(
+                    transcript,
+                    participants
+                )
+            }
+        ],
+        options={
+            "temperature": 0.1
+        }
+    )
+
+    return response["message"]["content"]
+
+
+def generate_with_groq(transcript, participants):
+
+    api_key = os.getenv("GROQ_API_KEY")
+
+    if not api_key:
+        raise RuntimeError(
+            "GROQ_API_KEY is not configured."
+        )
+
+    client = OpenAI(
+        api_key=api_key,
+        base_url=GROQ_BASE_URL
+    )
+
+    response = client.chat.completions.create(
+        model=GROQ_MODEL,
+        temperature=0.1,
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": build_user_prompt(
+                    transcript,
+                    participants
+                )
+            }
+        ]
+    )
+
+    return response.choices[0].message.content
+
+
+def generate_mom(transcript, participants=""):
 
     if not transcript or not transcript.strip():
 
@@ -234,169 +308,44 @@ def generate_mom(
             "action_items": []
         }
 
-    # ========================================================
-    # SYSTEM INSTRUCTION
-    # ========================================================
-
-    system_prompt = """
-You are an expert Minutes of Meeting (MoM) assistant.
-
-Your job is to carefully analyse a meeting transcript and
-convert it into a clean, professional and concise Minutes
-of Meeting.
-
-You MUST follow these rules:
-
-1. Use ONLY information explicitly present in the transcript.
-2. DO NOT invent facts.
-3. DO NOT add information that was not discussed.
-4. Do not include greetings such as "Good morning".
-5. Do not include "thank you", "okay", "sure", or other
-   meaningless conversational responses.
-6. Do not put questions into Decisions.
-7. Do not put general discussion into Action Items.
-8. Identify actual decisions separately from discussion.
-9. Identify clear tasks and the person responsible for them.
-10. If a task is clearly assigned to a person, use that person's
-    name as the responsible person.
-11. If a person says "I'll..." immediately after another speaker
-    assigns them a task, associate the task with that person.
-12. Keep discussion points concise. Combine closely related
-    statements into one useful point.
-13. Keep decisions concise and specific.
-14. Keep action items concise and specific.
-15. Do not repeat the same information in multiple sections
-    unless necessary.
-16. If something is not present in the transcript, return
-    "Not specified" for the agenda and an empty list for
-    sections where there is no information.
-17. Return ONLY valid JSON.
-18. Do NOT use markdown.
-19. Do NOT explain your reasoning.
-20. Do NOT include anything before or after the JSON.
-
-The JSON MUST have exactly this structure:
-
-{
-  "agenda": "string",
-  "discussion_points": [
-    "string"
-  ],
-  "decisions": [
-    "string"
-  ],
-  "action_items": [
-    {
-      "responsible": "string",
-      "task": "string"
-    }
-  ]
-}
-"""
-
-
-    # ========================================================
-    # USER PROMPT
-    # ========================================================
-
-    user_prompt = f"""
-Known participants:
-
-{participants if participants else "Not specified"}
-
-Meeting transcript:
-
-{transcript}
-
-Now generate the Minutes of Meeting.
-
-Pay special attention to:
-
-- What the meeting is about
-- Main topics discussed
-- Actual decisions
-- Tasks assigned to participants
-- Who is responsible for each task
-- Any follow-up meeting that was actually agreed upon
-
-Return ONLY the required JSON.
-"""
-
-
-    # ========================================================
-    # CALL GEMMA
-    # ========================================================
+    groq_api_key = os.getenv("GROQ_API_KEY")
 
     try:
 
-        response = ollama.chat(
+        # Cloud deployment:
+        # Railway has GROQ_API_KEY configured.
+        if groq_api_key:
 
-            model=MODEL_NAME,
+            raw_response = generate_with_groq(
+                transcript,
+                participants
+            )
 
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ],
+        # Local development:
+        # No Groq key means use Ollama + Gemma.
+        else:
 
-            options={
-                "temperature": 0.1
-            }
-        )
-
-
-        # ====================================================
-        # GET RESPONSE
-        # ====================================================
-
-        raw_response = response["message"]["content"]
-
-        # ====================================================
-        # CLEAN RESPONSE
-        # ====================================================
+            raw_response = generate_with_ollama(
+                transcript,
+                participants
+            )
 
         json_text = clean_json_response(
             raw_response
         )
 
-        # ====================================================
-        # PARSE JSON
-        # ====================================================
+        mom = json.loads(json_text)
 
-        mom = json.loads(
-            json_text
+        return validate_mom(mom)
+
+    except json.JSONDecodeError as e:
+
+        raise RuntimeError(
+            f"AI returned invalid JSON: {e}"
         )
-
-        # ====================================================
-        # VALIDATE
-        # ====================================================
-
-        return validate_mom(
-            mom
-        )
-
-    except json.JSONDecodeError:
-
-        # If Gemma somehow returns invalid JSON,
-        # return a safe empty structure instead of crashing.
-
-        return {
-            "agenda": "Not specified",
-            "discussion_points": [],
-            "decisions": [],
-            "action_items": []
-        }
 
     except Exception as e:
 
-        # Display the actual error in Streamlit
-        # so debugging is easier.
-
         raise RuntimeError(
-            f"Gemma could not generate the MoM: {e}"
+            f"AI could not generate the MoM: {e}"
         )
