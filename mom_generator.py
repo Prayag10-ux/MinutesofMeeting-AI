@@ -9,7 +9,7 @@ from openai import OpenAI
 LOCAL_MODEL = "gemma3:4b"
 
 # Groq's OpenAI-compatible API
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "openai/gpt-oss-20b"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 
